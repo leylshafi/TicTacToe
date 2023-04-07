@@ -1,7 +1,5 @@
 ﻿using System.IO;
-using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,86 +8,84 @@ namespace Client;
 
 public partial class MainWindow : Window
 {
-    private bool xTurn = true;
-    private int[,] board = new int[3, 3];
-    private TcpClient _tcpClient;
-    Button[,] buttons;
-    private readonly string _character;
+    private bool _xTurn;
 
-    TcpClient tcpClient;
-    BinaryWriter bw;
-    BinaryReader br;
+    private int[,] _board;
+
+    private TcpClient _client;
+    private NetworkStream _stream;
+
+
+    private Button[,] _buttons;
+    private BinaryReader _br;
+    private BinaryWriter _bw;
 
     public MainWindow()
     {
         InitializeComponent();
-        buttons = new Button[3, 3] {
-        { btn00, btn01, btn02 },
-        {btn00, btn01, btn12},
-        { btn00, btn01, btn22 }
-    };
+        _board = new int[3, 3];
+        _buttons = new Button[3, 3]
+        {
+          { btn00, btn01, btn02 },
+          { btn10, btn11, btn12 },
+          { btn20, btn21, btn22 }
+        };
+
+        _client = new TcpClient("localhost", 1234);
+        _stream = _client.GetStream();
+        _br = new BinaryReader(_stream);
+        _bw = new BinaryWriter(_stream);
+
+        _xTurn = _br.ReadBoolean();
+
+        if (_xTurn)
+            Title = "Player: X";
+        else
+            Title = "Player: O";
 
 
-        tcpClient = new();
-        var ip = IPAddress.Parse("127.0.0.1");
-        var port = 27001;
-        tcpClient.Connect(ip, port);
-
-        var serverStream = tcpClient.GetStream();
-        bw = new BinaryWriter(serverStream);
-        br = new BinaryReader(serverStream);
-
-        var player = br.Read();
-
-        Title="Player "+player.ToString();
-
-        if (player%2==0)
-            _character = "X";
-        else _character = "O";
 
         Task.Run(ReceiveUpdates);
     }
+
     private void Button_Click(object sender, RoutedEventArgs e)
     {
-        Button button = (Button)sender;
-        int row = Grid.GetRow(button);
-        int column = Grid.GetColumn(button);
-
-        if (xTurn)
+        if (sender is Button button)
         {
-            board[row, column] = 1;
-            button.Content = "X";
-        }
-        else
-        {
-            board[row, column] = 2;
-            button.Content = "O";
-        }
+            int row = Grid.GetRow(button);
+            int column = Grid.GetColumn(button);
 
-        button.IsEnabled = false;
-        xTurn = !xTurn;
+            if (_xTurn)
+            {
+                button.Content = "X";
+                _board[row, column] = 1;
+            }
+            else
+            {
+                button.Content = "O";
+                _board[row, column] = 2;
+            }
 
-        CheckForWinner();
-        string gameState = GetGame();
-        byte[] data = Encoding.ASCII.GetBytes(gameState);
-        bw.Write(data, 0, data.Length);
+            button.IsEnabled = false;
+
+            CheckForWinner();
+            _bw.Write(GetGameState());
+            Grid.IsEnabled = false;
+        }
     }
-    private Task ReceiveUpdates()
+
+    private void ReceiveUpdates()
     {
+
         while (true)
         {
-            byte[] data = new byte[1024];
-            int bytesRead = br.Read(data, 0, data.Length);
-
-            if (bytesRead > 0)
-            {
-                string receivedData = Encoding.ASCII.GetString(data, 0, bytesRead);
-                UpdateGame(receivedData);
-            }
+            Dispatcher.Invoke(() => { Grid.IsEnabled = true; });
+            string received = _br.ReadString();
+            UpdateGameState(received);
         }
     }
 
-    private string GetGame()
+    private string GetGameState()
     {
         string gameState = "";
 
@@ -97,29 +93,28 @@ public partial class MainWindow : Window
         {
             for (int j = 0; j < 3; j++)
             {
-                gameState += board[i, j];
+                gameState += _board[i, j];
             }
         }
 
         return gameState;
     }
 
-    private void UpdateGame(string gameState)
+    private void UpdateGameState(string gameState)
     {
-        int index = 0;
-
-        foreach (Button button in buttons)
+        for (int i = 0; i < 9; i++)
         {
-            int value = int.Parse(gameState[index].ToString());
-            board[index / 3, index % 3] = value;
+            int row = i / 3;
+            int col = i % 3;
+            int value = int.Parse(gameState[i].ToString());
+            _board[row, col] = value;
 
-            button.Content = value == 1 ? "X" : value == 2 ? "O" : "";
-            button.IsEnabled = value == 0;
-
-            index++;
+            Dispatcher.Invoke(() =>
+            {
+                _buttons[row, col].Content = value == 1 ? "X" : value == 2 ? "O" : "";
+                _buttons[row, col].IsEnabled = value == 0;
+            });
         }
-
-        xTurn = !xTurn;
     }
 
     private void CheckForWinner()
@@ -127,9 +122,9 @@ public partial class MainWindow : Window
 
         for (int i = 0; i < 3; i++)
         {
-            if (board[i, 0] != 0 && board[i, 0] == board[i, 1] && board[i, 1] == board[i, 2])
+            if (_board[i, 0] != 0 && _board[i, 0] == _board[i, 1] && _board[i, 1] == _board[i, 2])
             {
-                ShowWinner(board[i, 0]);
+                ShowWinner(_board[i, 0]);
                 return;
             }
         }
@@ -137,23 +132,23 @@ public partial class MainWindow : Window
 
         for (int i = 0; i < 3; i++)
         {
-            if (board[0, i] != 0 && board[0, i] == board[1, i] && board[1, i] == board[2, i])
+            if (_board[0, i] != 0 && _board[0, i] == _board[1, i] && _board[1, i] == _board[2, i])
             {
-                ShowWinner(board[0, i]);
+                ShowWinner(_board[0, i]);
                 return;
             }
         }
 
 
-        if (board[0, 0] != 0 && board[0, 0] == board[1, 1] && board[1, 1] == board[2, 2])
+        if (_board[0, 0] != 0 && _board[0, 0] == _board[1, 1] && _board[1, 1] == _board[2, 2])
         {
-            ShowWinner(board[0, 0]);
+            ShowWinner(_board[0, 0]);
             return;
         }
 
-        if (board[0, 2] != 0 && board[0, 2] == board[1, 1] && board[1, 1] == board[2, 0])
+        if (_board[0, 2] != 0 && _board[0, 2] == _board[1, 1] && _board[1, 1] == _board[2, 0])
         {
-            ShowWinner(board[0, 2]);
+            ShowWinner(_board[0, 2]);
             return;
         }
 
@@ -162,7 +157,7 @@ public partial class MainWindow : Window
         {
             for (int j = 0; j < 3; j++)
             {
-                if (board[i, j] == 0)
+                if (_board[i, j] == 0)
                 {
                     isTie = false;
                     break;
@@ -195,8 +190,7 @@ public partial class MainWindow : Window
 
     private void ResetGame()
     {
-        board = new int[3, 3];
-        xTurn = true;
+        _board = new int[3, 3];
 
         foreach (var element in Grid.Children)
         {
